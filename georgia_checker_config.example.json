@@ -1,0 +1,8 @@
+{
+  "smtp_host": "smtp.fastmail.com",
+  "smtp_port": 587,
+  "smtp_user": "you@fastmail.com",
+  "smtp_password": "your-app-specific-password",
+  "from_email": "you@fastmail.com",
+  "to_email": "you@fastmail.com"
+}
