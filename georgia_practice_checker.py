@@ -9,6 +9,8 @@ import os
 import re
 import smtplib
 import sys
+import traceback
+from datetime import datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -51,18 +53,30 @@ def scrape_playground_georgia():
     practices = []
     in_georgia = False
 
-    # The site uses headers for states and lists for practices.
+    # The site uses headers for states and divs for practices.
     # Walk through all elements looking for Georgia section.
     seen = set()
-    for el in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "li", "p"]):
+    for el in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "div"]):
         text = el.get_text(strip=True)
         tag = el.name
 
         if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             in_georgia = "georgia" in text.lower()
         elif in_georgia and text:
-            # Skip empty or navigation-like text; dedupe nested elements
-            if len(text) > 3 and text not in seen:
+            # Skip link/button text and state names
+            if text in ("Visit Practice Website", "Georgia", "North Carolina",
+                        "Pennsylvania", "Tennessee", "Alabama", "Florida",
+                        "South Carolina", "Virginia", "Texas"):
+                continue
+            # Skip city/state lines (e.g. "Marietta, GA")
+            if re.search(r',\s*[A-Z]{2}$', text):
+                continue
+            # Skip long descriptions and concatenated parent divs
+            if len(text) > 80:
+                continue
+            if len(text) <= 3:
+                continue
+            if text not in seen:
                 seen.add(text)
                 practices.append(text)
 
@@ -183,37 +197,63 @@ def send_email(config, subject, body):
         server.send_message(msg)
 
 
+def send_error_email(config, error):
+    """Send an error alert when the main report email can't fire."""
+    admin = config.get("admin_email", config.get("to_email", ""))
+    if not admin:
+        return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    subject = f"[Georgia Checker] ERROR – {now}"
+    body = f"Georgia practice checker failed at {now}:\n\n{error}"
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = config["from_email"]
+        msg["To"] = admin
+        with smtplib.SMTP(config["smtp_host"], config["smtp_port"]) as server:
+            server.starttls()
+            server.login(config["smtp_user"], config["smtp_password"])
+            server.send_message(msg)
+        print("Error email sent.")
+    except Exception as exc:
+        print(f"Could not send error email: {exc}")
+
+
 def main():
     config = load_config()
+    try:
+        print("Scraping Playground Pediatrics...")
+        playground = scrape_playground_georgia()
+        print(f"  Found {len(playground)} Georgia practice(s)")
 
-    print("Scraping Playground Pediatrics...")
-    playground = scrape_playground_georgia()
-    print(f"  Found {len(playground)} Georgia practice(s)")
+        print("Scraping Zarminali...")
+        zarminali = scrape_zarminali_georgia()
+        print(f"  Found {len(zarminali)} Georgia location(s)")
 
-    print("Scraping Zarminali...")
-    zarminali = scrape_zarminali_georgia()
-    print(f"  Found {len(zarminali)} Georgia location(s)")
+        previous = load_previous_state()
+        new_playground = [p for p in playground if p not in previous["playground"]]
+        new_zarminali = [z for z in zarminali if z not in previous["zarminali"]]
 
-    previous = load_previous_state()
-    new_playground = [p for p in playground if p not in previous["playground"]]
-    new_zarminali = [z for z in zarminali if z not in previous["zarminali"]]
+        is_first_run = not STATE_FILE.exists()
 
-    is_first_run = not STATE_FILE.exists()
+        subject = "Georgia Pediatric Practice Report"
+        if not is_first_run and (new_playground or new_zarminali):
+            subject = "🔔 New Georgia Practice Detected!"
 
-    subject = "Georgia Pediatric Practice Report"
-    if not is_first_run and (new_playground or new_zarminali):
-        subject = "🔔 New Georgia Practice Detected!"
+        body = build_email(playground, zarminali,
+                           new_playground if not is_first_run else [],
+                           new_zarminali if not is_first_run else [])
 
-    body = build_email(playground, zarminali,
-                       new_playground if not is_first_run else [],
-                       new_zarminali if not is_first_run else [])
+        print("Sending email...")
+        send_email(config, subject, body)
+        print("Email sent.")
 
-    print("Sending email...")
-    send_email(config, subject, body)
-    print("Email sent.")
-
-    save_state({"playground": playground, "zarminali": zarminali})
-    print("State saved.")
+        save_state({"playground": playground, "zarminali": zarminali})
+        print("State saved.")
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+        send_error_email(config, f"{exc}\n\n{traceback.format_exc()}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

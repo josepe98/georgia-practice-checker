@@ -15,6 +15,7 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 5. **Email subject** should be `"Georgia Pediatric Practice Report"` normally, or `"🔔 New Georgia Practice Detected!"` when new entries are found.
 6. **Persist state** to `georgia_practices_state.json` after each run so future runs can detect changes.
 7. **Run weekly** — every Monday at 9 AM via macOS LaunchAgent.
+8. **Send an error alert email** to the admin if any unhandled exception prevents the main report email from firing. The error email must include the exception message and full stack trace.
 
 ## Non-Functional Requirements
 
@@ -33,6 +34,7 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 | `smtp_password` | App-specific password |
 | `from_email` | Sender address |
 | `to_email` | Recipient address |
+| `admin_email` | Error alert recipient (optional — falls back to `to_email`) |
 
 ## Dependencies
 
