@@ -7,8 +7,8 @@ A Python scraper that monitors two pediatric practice websites — Playground Pe
 - Scrapes each practice's locations page and filters to Georgia
 - Compares against a saved state file to detect new practices
 - Sends a formatted email report every Monday
-- Highlights new additions with an alert in the subject line
-- Emails a stack trace on failure
+- Highlights new additions with an alert in the subject line (`🔔 New Georgia Practice Detected!`)
+- Sends error alerts with stack traces if the script fails
 
 ## Stack
 
