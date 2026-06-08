@@ -95,7 +95,8 @@ def scrape_zarminali_georgia():
 
     # Lines to skip — not location names
     SKIP_LINES = {
-        "Make an Appointment", "View Location", "Join Priority List", "Coming Soon",
+        "Make an Appointment", "Book An Appointment",
+        "View Location", "Join Priority List", "Coming Soon",
         "Walk-ins welcome", "Offers Telehealth",
         "Primary Care", "Urgent Care", "Primary Care Urgent Care",
     }
