@@ -7,15 +7,17 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 
 1. **Scrape Playground Pediatrics** (`https://www.playgroundpediatrics.com/our-practices`) for Georgia practice names.
 2. **Scrape Zarminali** (`https://zarminali.com/locations`) for Georgia location names.
-3. **Detect new practices** by comparing current scrape results against previously saved state.
-4. **Send an email report** after every run containing:
-   - A new-practice alert section (if any new entries were found and it is not the first run)
+3. **Monitor Paylocity recruiting** for Playground Management job postings to detect new Georgia sites. Resolve practice brand via job detail page to handle cases where `LocationName` is ambiguous (e.g., city/state instead of brand). Tag de novo sites.
+4. **Detect new practices and sites** by comparing current scrape results against previously saved state. For job-based detection, only flag as new if the site location is previously unseen AND either flagged as de novo OR the resolved brand is not already on the main practices page.
+5. **Send an email report** after every run containing:
+   - A new-practice alert section (if any new practices, locations, or sites were found and it is not the first run)
    - The full current list of Georgia practices from both sites
+   - A list of current Georgia job postings from Playlocity recruiting, grouped by brand and location
    - Source URLs
-5. **Email subject** should be `"Georgia Pediatric Practice Report"` normally, or `"🔔 New Georgia Practice Detected!"` when new entries are found.
-6. **Persist state** to `georgia_practices_state.json` after each run so future runs can detect changes.
-7. **Run weekly** — every Monday at 9 AM via macOS LaunchAgent.
-8. **Send an error alert email** to the admin if any unhandled exception prevents the main report email from firing. The error email must include the exception message and full stack trace.
+6. **Email subject** should be `"Georgia Pediatric Practice Report"` normally, or `"🔔 New Georgia Practice Detected!"` when new entries are found.
+7. **Persist state** to `georgia_practices_state.json` after each run (including tracked job locations) so future runs can detect changes.
+8. **Run weekly** — every Monday at 9 AM via macOS LaunchAgent.
+9. **Send an error alert email** to the admin if any unhandled exception prevents the main report email from firing. The error email must include the exception message and full stack trace.
 
 ## Non-Functional Requirements
 
@@ -39,5 +41,6 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 ## Dependencies
 
 - Python 3
-- `requests`
-- `beautifulsoup4`
+- `requests` (HTTP fetching)
+- `beautifulsoup4` (HTML parsing)
+- `re` (regex for JSON extraction from embedded `window.pageData` blobs)
