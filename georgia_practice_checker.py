@@ -21,6 +21,14 @@ SCRIPT_DIR = Path(__file__).parent
 STATE_FILE = SCRIPT_DIR / "georgia_practices_state.json"
 CONFIG_FILE = SCRIPT_DIR / "georgia_checker_config.json"
 
+PLAYGROUND_JOBS_URL = (
+    "https://recruiting.paylocity.com/recruiting/jobs/All/"
+    "6e778039-ca42-42cf-a3f1-7f072a4a3317/Playground-Management"
+)
+PLAYGROUND_JOB_DETAIL_URL = (
+    "https://recruiting.paylocity.com/recruiting/jobs/Details/{job_id}"
+)
+
 
 def load_config():
     if not CONFIG_FILE.exists():
@@ -35,7 +43,7 @@ def load_previous_state():
     if STATE_FILE.exists():
         with open(STATE_FILE) as f:
             return json.load(f)
-    return {"playground": [], "zarminali": []}
+    return {"playground": [], "zarminali": [], "playground_jobs_locations": []}
 
 
 def save_state(state):
@@ -139,7 +147,76 @@ def scrape_zarminali_georgia():
     return location_names
 
 
-def build_email(playground, zarminali, new_playground, new_zarminali):
+def _fetch_job_brand(job_id):
+    """Fetch a Paylocity job detail page and return the brand (`moduleName`).
+
+    Returns None on any failure — callers should treat None as 'unknown brand'.
+    """
+    try:
+        resp = requests.get(
+            PLAYGROUND_JOB_DETAIL_URL.format(job_id=job_id),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        m = re.search(
+            r"window\.pageData\s*=\s*(\{.*?\});",
+            resp.text,
+            re.DOTALL,
+        )
+        if not m:
+            return None
+        return json.loads(m.group(1)).get("moduleName") or None
+    except Exception as exc:
+        print(f"  WARN: could not resolve brand for job {job_id}: {exc}")
+        return None
+
+
+def scrape_playground_jobs_georgia():
+    """Scrape Paylocity recruiting page for Playground Management GA jobs.
+
+    The list page embeds all jobs as a `window.pageData = {...}` JSON blob,
+    but its `LocationName` field is sometimes the city/state instead of the
+    practice brand (e.g. "Warner Robins, GA" actually = Cornerstone Medical
+    Associates). The per-job detail page exposes the brand cleanly in
+    `window.pageData.moduleName`, so we fetch one detail page per GA job.
+
+    Returns a list of job dicts (sorted by brand, location, title) with keys:
+      title, location, brand, is_de_novo, published (YYYY-MM-DD).
+    `location` stays as the per-site identifier (preserves distinct de novo
+    sites that share a brand); `brand` is the canonical practice name.
+    """
+    resp = requests.get(PLAYGROUND_JOBS_URL, timeout=30)
+    resp.raise_for_status()
+    m = re.search(
+        r"window\.pageData\s*=\s*(\{.*?\});\s*</script>",
+        resp.text,
+        re.DOTALL,
+    )
+    if not m:
+        return []
+    data = json.loads(m.group(1))
+
+    jobs = []
+    for j in data.get("Jobs", []):
+        loc = j.get("JobLocation") or {}
+        if loc.get("State") != "GA":
+            continue
+        location = j.get("LocationName") or loc.get("Name") or ""
+        brand = _fetch_job_brand(j.get("JobId"))
+        jobs.append({
+            "title": j.get("JobTitle", ""),
+            "location": location,
+            "brand": brand,
+            "is_de_novo": "(De Novo)" in location,
+            "published": (j.get("PublishedDate") or "")[:10],
+        })
+
+    jobs.sort(key=lambda j: (j["brand"] or "", j["location"], j["title"]))
+    return jobs
+
+
+def build_email(playground, zarminali, jobs,
+                new_playground, new_zarminali, new_site_locations):
     """Build the email body."""
     lines = []
     lines.append("Georgia Pediatric Practice Report")
@@ -147,7 +224,7 @@ def build_email(playground, zarminali, new_playground, new_zarminali):
     lines.append("")
 
     # New practice alerts
-    if new_playground or new_zarminali:
+    if new_playground or new_zarminali or new_site_locations:
         lines.append("🔔 NEW PRACTICES DETECTED!")
         lines.append("-" * 30)
         if new_playground:
@@ -158,6 +235,11 @@ def build_email(playground, zarminali, new_playground, new_zarminali):
             lines.append("New on Zarminali:")
             for z in new_zarminali:
                 lines.append(f"  ★ {z}")
+        if new_site_locations:
+            lines.append("New GA sites on Playground (via Paylocity recruiting):")
+            for loc in new_site_locations:
+                tag = "  ★ [DE NOVO] " if "(De Novo)" in loc else "  ★ "
+                lines.append(f"{tag}{loc}")
         lines.append("")
 
     lines.append("Current Georgia Practices — Playground Pediatrics")
@@ -178,9 +260,28 @@ def build_email(playground, zarminali, new_playground, new_zarminali):
         lines.append("  (none found)")
 
     lines.append("")
+    lines.append("Georgia Job Postings — Playground (Paylocity)")
+    lines.append("-" * 30)
+    if jobs:
+        for j in jobs:
+            tag = " [DE NOVO]" if j["is_de_novo"] else ""
+            brand = j["brand"] or "?"
+            # When the listing's LocationName already matches the brand (e.g. a
+            # job at "Jonesboro Pediatrics"), don't repeat it.
+            if j["location"] and j["location"] != brand:
+                header = f"{brand} — {j['location']}{tag}"
+            else:
+                header = f"{brand}{tag}"
+            lines.append(f"  • {header}")
+            lines.append(f"      {j['title']} (posted {j['published']})")
+    else:
+        lines.append("  (none found)")
+
+    lines.append("")
     lines.append("Sources:")
     lines.append("  https://www.playgroundpediatrics.com/our-practices")
     lines.append("  https://zarminali.com/locations")
+    lines.append(f"  {PLAYGROUND_JOBS_URL}")
 
     return "\n".join(lines)
 
@@ -231,25 +332,53 @@ def main():
         zarminali = scrape_zarminali_georgia()
         print(f"  Found {len(zarminali)} Georgia location(s)")
 
+        print("Scraping Playground recruiting (Paylocity)...")
+        jobs = scrape_playground_jobs_georgia()
+        job_locations = sorted({j["location"] for j in jobs if j["location"]})
+        print(f"  Found {len(jobs)} GA job(s) across {len(job_locations)} location(s)")
+
         previous = load_previous_state()
-        new_playground = [p for p in playground if p not in previous["playground"]]
-        new_zarminali = [z for z in zarminali if z not in previous["zarminali"]]
+        new_playground = [p for p in playground if p not in previous.get("playground", [])]
+        new_zarminali = [z for z in zarminali if z not in previous.get("zarminali", [])]
+        # Treat the jobs section as "first run" if its state key is missing — avoids
+        # flagging every current GA hiring location as new the first time this runs.
+        jobs_previously_tracked = "playground_jobs_locations" in previous
+        # A job points at a new site if its location is one we haven't seen AND
+        # either it's flagged "(De Novo)" or its resolved brand isn't already on
+        # the practices page (e.g. Jonesboro Pediatrics) — postings at existing
+        # acquired practices (e.g. Cornerstone-branded Warner Robins jobs) are
+        # not "new sites" even when the LocationName looks unfamiliar.
+        known_brands = set(playground)
+        seen_locations = set(previous.get("playground_jobs_locations", []))
+        new_site_locations = sorted({
+            j["location"] for j in jobs
+            if j["location"]
+            and j["location"] not in seen_locations
+            and (j["is_de_novo"] or (j["brand"] and j["brand"] not in known_brands))
+        }) if jobs_previously_tracked else []
 
         is_first_run = not STATE_FILE.exists()
 
         subject = "Georgia Pediatric Practice Report"
-        if not is_first_run and (new_playground or new_zarminali):
+        if not is_first_run and (new_playground or new_zarminali or new_site_locations):
             subject = "🔔 New Georgia Practice Detected!"
 
-        body = build_email(playground, zarminali,
-                           new_playground if not is_first_run else [],
-                           new_zarminali if not is_first_run else [])
+        body = build_email(
+            playground, zarminali, jobs,
+            new_playground if not is_first_run else [],
+            new_zarminali if not is_first_run else [],
+            new_site_locations if not is_first_run else [],
+        )
 
         print("Sending email...")
         send_email(config, subject, body)
         print("Email sent.")
 
-        save_state({"playground": playground, "zarminali": zarminali})
+        save_state({
+            "playground": playground,
+            "zarminali": zarminali,
+            "playground_jobs_locations": job_locations,
+        })
         print("State saved.")
     except Exception as exc:
         print(f"ERROR: {exc}")
