@@ -1,18 +1,21 @@
 # georgia-practice-checker
 
-A Python scraper that monitors two pediatric practice websites — Playground Pediatrics and Zarminali Pediatrics — for new Georgia locations and emails a weekly report.
+A Python scraper that monitors Playground Pediatrics, Zarminali Pediatrics, and Playground recruiting activity for new Georgia practice locations and emails a weekly report.
 
 ## What it does
 
-- Scrapes each practice's locations page and filters to Georgia
-- Compares against a saved state file to detect new practices
-- Sends a formatted email report every Monday
+- Scrapes Playground Pediatrics and Zarminali locations pages for Georgia practices
+- Monitors Paylocity recruiting for Playground Management job postings in Georgia
+- Resolves practice brand from job detail pages to handle ambiguous location names
+- Compares against saved state to detect new practices and sites
+- Sends a formatted email report every Monday with current practices and open job postings
 - Highlights new additions with an alert in the subject line (`🔔 New Georgia Practice Detected!`)
+- Tags de novo practice sites when detected through recruiting
 - Sends error alerts with stack traces if the script fails
 
 ## Stack
 
-Python 3, `requests`, `beautifulsoup4`, SMTP
+Python 3, `requests`, `beautifulsoup4`, SMTP, regex (for JSON extraction from embedded page data)
 
 ## Setup
 
