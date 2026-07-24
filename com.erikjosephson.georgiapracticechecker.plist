@@ -13,11 +13,13 @@
 
     <key>StartCalendarInterval</key>
     <dict>
-        <!-- Run every Monday at 9:00 AM -->
+        <!-- Run every Monday at 7:00 AM. If the Mac is asleep, launchd
+             replays the fire at next wake; the script waits for network
+             and ignores duplicate fires. -->
         <key>Weekday</key>
         <integer>1</integer>
         <key>Hour</key>
-        <integer>9</integer>
+        <integer>7</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>

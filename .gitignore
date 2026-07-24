@@ -1,6 +1,10 @@
 georgia_checker_config.json
 georgia_practices_state.json
 georgia_checker.log
+georgia_watchdog.log
+.last_scanner_success
+.heartbeat_alert_sent_for
+.watchdog_last_poll
 .DS_Store
 __pycache__/
 

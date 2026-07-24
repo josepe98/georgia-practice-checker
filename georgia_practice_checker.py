@@ -8,9 +8,12 @@ import json
 import os
 import re
 import smtplib
+import socket
+import subprocess
 import sys
+import time
 import traceback
-from datetime import datetime
+from datetime import date, datetime, time as dtime, timedelta
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -20,6 +23,17 @@ from bs4 import BeautifulSoup
 SCRIPT_DIR = Path(__file__).parent
 STATE_FILE = SCRIPT_DIR / "georgia_practices_state.json"
 CONFIG_FILE = SCRIPT_DIR / "georgia_checker_config.json"
+HEARTBEAT_FILE = SCRIPT_DIR / ".last_scanner_success"
+ALERT_SENT_FILE = SCRIPT_DIR / ".heartbeat_alert_sent_for"
+WATCHDOG_POLL_FILE = SCRIPT_DIR / ".watchdog_last_poll"
+
+# Scheduled fire is Monday 07:00; the run is due complete by 07:45 even with
+# the full network-wait window. The watchdog only alerts after this cutoff.
+WATCHDOG_MONDAY_CUTOFF = dtime(7, 45)
+# Skip watchdog polls this soon after boot/wake: launchd replays a missed
+# Monday fire at wake, and the scanner needs time to finish before we can
+# call the heartbeat missing.
+WAKE_GRACE_SECONDS = 600
 
 PLAYGROUND_JOBS_URL = (
     "https://recruiting.paylocity.com/recruiting/jobs/All/"
@@ -299,30 +313,143 @@ def send_email(config, subject, body):
         server.send_message(msg)
 
 
-def send_error_email(config, error):
-    """Send an error alert when the main report email can't fire."""
+def send_admin_email(config, subject, body):
+    """Send an alert to the admin address (falls back to to_email)."""
     admin = config.get("admin_email", config.get("to_email", ""))
     if not admin:
         return
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = config["from_email"]
+    msg["To"] = admin
+    with smtplib.SMTP(config["smtp_host"], config["smtp_port"]) as server:
+        server.starttls()
+        server.login(config["smtp_user"], config["smtp_password"])
+        server.send_message(msg)
+
+
+def send_error_email(config, error):
+    """Send an error alert when the main report email can't fire."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    subject = f"[Georgia Checker] ERROR – {now}"
-    body = f"Georgia practice checker failed at {now}:\n\n{error}"
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = config["from_email"]
-        msg["To"] = admin
-        with smtplib.SMTP(config["smtp_host"], config["smtp_port"]) as server:
-            server.starttls()
-            server.login(config["smtp_user"], config["smtp_password"])
-            server.send_message(msg)
+        send_admin_email(
+            config,
+            f"[Georgia Checker] ERROR – {now}",
+            f"Georgia practice checker failed at {now}:\n\n{error}",
+        )
         print("Error email sent.")
     except Exception as exc:
         print(f"Could not send error email: {exc}")
 
 
-def main():
-    config = load_config()
+def read_date_file(path):
+    """Read an ISO date from a marker file; None if missing/unparseable."""
+    try:
+        return date.fromisoformat(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def wait_for_network(host="www.playgroundpediatrics.com", tries=40, delay=15):
+    """Block until DNS resolves, up to tries*delay seconds.
+
+    The Monday fire is usually replayed seconds after the Mac wakes, before
+    Wi-Fi is up — every run then dies on NameResolutionError (and the error
+    email dies with it). Waiting out the network beats failing instantly.
+    """
+    for attempt in range(tries):
+        try:
+            socket.getaddrinfo(host, 443)
+            if attempt:
+                print(f"Network up after ~{attempt * delay}s.")
+            return True
+        except OSError:
+            if attempt == 0:
+                print(f"Network not ready (DNS failing) — retrying for up to "
+                      f"{tries * delay // 60} min...")
+            time.sleep(delay)
+    return False
+
+
+def seconds_since_wake():
+    """Seconds since the most recent boot or wake-from-sleep; None if unknown."""
+    try:
+        ref = 0
+        for key in ("kern.boottime", "kern.waketime"):
+            out = subprocess.check_output(["sysctl", "-n", key], text=True)
+            m = re.search(r"sec = (\d+)", out)
+            if m:
+                ref = max(ref, int(m.group(1)))
+        if not ref:
+            return None
+        return time.time() - ref
+    except Exception:
+        return None
+
+
+def run_watchdog(config):
+    """Alert admin if the Monday scan never wrote a fresh heartbeat.
+
+    Runs every 5 min via its own launchd job (StartInterval, not calendar-
+    based, so it can't be lost to the wedged-calendar-registration failure
+    mode). Because it polls all day, the alert email goes out as soon as
+    network is available — unlike the scanner's own error email, which dies
+    in the same outage that killed the scrape. One alert per missed Monday.
+    """
+    now = datetime.now()
+    WATCHDOG_POLL_FILE.write_text(now.isoformat(timespec="seconds"))
+
+    due_monday = now.date() - timedelta(days=now.date().weekday())
+    if now.date() == due_monday and now.time() < WATCHDOG_MONDAY_CUTOFF:
+        return  # scheduled run hasn't had its chance yet
+
+    since_wake = seconds_since_wake()
+    if since_wake is not None and since_wake < WAKE_GRACE_SECONDS:
+        return  # just woke — launchd may be replaying the scan right now
+
+    heartbeat = read_date_file(HEARTBEAT_FILE)
+    if heartbeat is not None and heartbeat >= due_monday:
+        return  # healthy
+    if read_date_file(ALERT_SENT_FILE) == due_monday:
+        return  # already alerted for this miss
+
+    uid = os.getuid()
+    subject = f"[Georgia Checker] Scanner did NOT run on Monday {due_monday}"
+    body = (
+        f"The Georgia practice checker has no successful run recorded for "
+        f"Monday {due_monday}.\n"
+        f"Last successful run: {heartbeat or 'never'}.\n\n"
+        f"Check the log:\n  tail -40 {SCRIPT_DIR / 'georgia_checker.log'}\n\n"
+        f"Recovery (runs the scan now):\n"
+        f"  launchctl kickstart gui/{uid}/com.erikjosephson.georgiapracticechecker\n"
+    )
+    try:
+        send_admin_email(config, subject, body)
+    except Exception as exc:
+        # Leave ALERT_SENT_FILE unwritten so the next poll retries.
+        print(f"{now:%Y-%m-%d %H:%M} watchdog: could not send alert: {exc}")
+        return
+    ALERT_SENT_FILE.write_text(due_monday.isoformat())
+    print(f"{now:%Y-%m-%d %H:%M} watchdog: heartbeat missing for "
+          f"{due_monday} — alert sent.")
+
+
+def run_scanner(config, force=False):
+    today = date.today()
+    if not force and read_date_file(HEARTBEAT_FILE) == today:
+        # launchd replays a missed calendar fire at the next wake even when
+        # the run already happened — without this guard that means a
+        # duplicate report email.
+        print(f"{datetime.now():%Y-%m-%d %H:%M} Already ran successfully "
+              f"today — duplicate fire ignored (--force to rerun).")
+        return
+
+    print(f"=== Run started {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    if not wait_for_network():
+        print("ERROR: network never came up — giving up. "
+              "The watchdog will alert if this was the Monday run.")
+        sys.exit(1)
+
     try:
         print("Scraping Playground Pediatrics...")
         playground = scrape_playground_georgia()
@@ -380,10 +507,20 @@ def main():
             "playground_jobs_locations": job_locations,
         })
         print("State saved.")
+        HEARTBEAT_FILE.write_text(today.isoformat())
     except Exception as exc:
         print(f"ERROR: {exc}")
         send_error_email(config, f"{exc}\n\n{traceback.format_exc()}")
         sys.exit(1)
+
+
+def main():
+    args = sys.argv[1:]
+    config = load_config()
+    if "--watchdog" in args:
+        run_watchdog(config)
+    else:
+        run_scanner(config, force="--force" in args)
 
 
 if __name__ == "__main__":

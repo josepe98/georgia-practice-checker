@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.erikjosephson.georgiapracticechecker.watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/erikjosephson/georgia-practice-checker/georgia_practice_checker.py</string>
+        <string>--watchdog</string>
+    </array>
+
+    <!-- Poll every 5 minutes. The script exits immediately unless a Monday
+         heartbeat is overdue. Uses StartInterval (not calendar-based) so it
+         cannot be lost to the wedged calendar-registration failure mode that
+         hit the AML monitor, and so a missed-Monday alert goes out as soon
+         as the Mac is awake with network — independent of the scan's own
+         failure moment. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/erikjosephson/georgia-practice-checker/georgia_watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/erikjosephson/georgia-practice-checker/georgia_watchdog.log</string>
+</dict>
+</plist>
