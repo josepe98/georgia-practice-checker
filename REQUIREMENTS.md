@@ -18,6 +18,7 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 7. **Persist state** to `georgia_practices_state.json` after each run (including tracked job locations) so future runs can detect changes.
 8. **Run weekly** — every Monday at 9 AM via macOS LaunchAgent.
 9. **Send an error alert email** to the admin if any unhandled exception prevents the main report email from firing. The error email must include the exception message and full stack trace.
+10. **Survive missed runs** — detect when a Monday run does not complete successfully (no heartbeat) and alert the admin after 07:45 Monday UTC if not already alerted for that week.
 
 ## Non-Functional Requirements
 
@@ -25,6 +26,10 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
 - Config file must not be committed with real credentials — use `georgia_checker_config.example.json` as a template
 - Script must be runnable manually for testing
 - Errors and output logged to `georgia_checker.log`
+- **Network resilience:** script must wait up to 10 minutes for DNS resolution before scraping, to survive wake-time network delays
+- **Heartbeat tracking:** record timestamp of last successful run in `.last_scanner_success` to enable duplicate-fire guard and watchdog monitoring
+- **Duplicate-fire guard:** exit early without sending duplicate emails if the script already ran today (bypassed with `--force` flag)
+- **Watchdog monitor:** run a separate watchdog process (`georgia_practice_checker.py --watchdog`) via LaunchAgent every 5 minutes to detect missed Monday runs and alert the admin once per missed week
 
 ## Configuration
 
