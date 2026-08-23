@@ -34,7 +34,11 @@ Python 3, `requests`, `beautifulsoup4`, SMTP, regex (for JSON extraction from em
 
 ## Schedule (macOS)
 
-Copy the included LaunchAgent plist to `~/Library/LaunchAgents/` to run every Monday at 9 AM.
+Copy the included LaunchAgent plists to `~/Library/LaunchAgents/`:
+- `com.erikjosephson.georgiapracticechecker.plist` — Runs the scanner every Monday at 7:00 AM
+- `com.erikjosephson.georgiapracticechecker.watchdog.plist` — Monitors for missed runs (polls every 5 minutes)
+
+The watchdog alerts the admin if a Monday run doesn't complete successfully, enabling reliable alerting even when the scanner fails on a dead network.
 
 ## License
 
