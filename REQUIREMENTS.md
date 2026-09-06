@@ -16,7 +16,7 @@ Monitor two pediatric practice websites for new Georgia locations and send a wee
    - Source URLs
 6. **Email subject** should be `"Georgia Pediatric Practice Report"` normally, or `"🔔 New Georgia Practice Detected!"` when new entries are found.
 7. **Persist state** to `georgia_practices_state.json` after each run (including tracked job locations) so future runs can detect changes.
-8. **Run weekly** — every Monday at 9 AM via macOS LaunchAgent.
+8. **Run weekly** — every Monday at 7:00 AM via macOS LaunchAgent.
 9. **Send an error alert email** to the admin if any unhandled exception prevents the main report email from firing. The error email must include the exception message and full stack trace.
 10. **Survive missed runs** — detect when a Monday run does not complete successfully (no heartbeat) and alert the admin after 07:45 Monday UTC if not already alerted for that week.
 
